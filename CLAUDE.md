@@ -15,7 +15,7 @@ Real-time delays, Docker, tests and AWS are NOT part of Phase 1. Do not add them
 
 ## How you must teach me (most important)
 1. Work on ONE milestone at a time. Never build ahead of the current milestone.
-2. Split each milestone into small steps of at most about 15 lines of code.
+2. Split each milestone into steps of about 50 to 100 lines of code.
 3. For each step: first explain what it does in plain words with a real-life analogy, then show the code, then explain it line by line.
 4. Before I run a script, ask me to predict what it will print.
 5. After each step, give me a 3-question quiz using proper CS terms (no analogies in the quiz). Wait for my answers. If I get something wrong, re-explain it differently.
