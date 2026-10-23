@@ -1,6 +1,6 @@
 -- Tables for the GO Transit GTFS data (Milestone 2).
--- First create the database once:   CREATE DATABASE transit_tracker;
--- Then run this file:                psql -U postgres -d transit_tracker -f schema.sql
+-- First create the database once:   CREATE DATABASE transit;
+-- Then run this file:                psql -U postgres -d transit -f schema.sql
 -- Warning: running this file again deletes the tables and all their rows.
 
 DROP TABLE IF EXISTS stops;
