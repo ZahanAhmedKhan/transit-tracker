@@ -11,14 +11,14 @@ flowchart LR
     A["GTFS files<br/>data/*.txt"] -->|"csv.DictReader<br/>load_stops_routes.py<br/>load_trips_times.py"| B[("PostgreSQL<br/>database: transit")]
     S["schema.sql"] -->|"CREATE TABLE"| B
     B -->|"SQL<br/>queries.sql"| C["Answers"]
-    B -->|"psycopg"| D["Streamlit page<br/>app.py"]
+    B -->|"psycopg<br/>db.py, queries.py"| D["Streamlit dashboard<br/>app.py"]
 ```
 
 1. **Source data.** GO Transit publishes its schedule in [GTFS](https://gtfs.org/schedule/), a standard format of comma-separated text files. This project uses the feed valid from 2026-09-29 to 2026-11-27.
 2. **Schema.** `schema.sql` creates five tables with a primary key and a chosen data type for every column.
 3. **Load.** Two Python scripts read the files with `csv.DictReader`, convert each value to the right type, and insert the rows with `psycopg`.
 4. **Query.** `queries.sql` answers three questions by joining the tables.
-5. **Show.** `app.py` runs the same queries and displays the results in a browser.
+5. **Show.** `app.py` is a Streamlit dashboard with four tabs: departures from any station on a chosen date and time window (Milton GO, 6 to 10 am by default), routes at a stop, trips per route as a bar chart, and a map of all stops with their names. Clicking a departure opens a map of that trip: its real road path in GO's official route colour, every stop it makes, and how long it takes. Its queries live in `queries.py` and return pandas DataFrames.
 
 ## The data
 
@@ -48,6 +48,8 @@ erDiagram
 - **`stop_times` is loaded in batches.** The file has 1.67 million rows (90 MB). The loader reads it one row at a time and sends 50,000 rows at a time with `executemany`. That keeps memory use low and avoids 1.67 million separate round trips to the database. The full load takes about two minutes.
 - **One transaction per load.** Each loader runs inside a single `with psycopg.connect(...)` block, so if anything fails, nothing is saved and a table is never left half loaded.
 - **Only `calendar_dates.txt`.** GO's feed has no `calendar.txt`. Each `service_id` is a single date, so weekdays are found with `EXTRACT(ISODOW FROM date) BETWEEN 1 AND 5`.
+- **Indexes on the join and filter columns.** `indexes.sql` adds indexes on `stop_times(stop_id)`, `stop_times(trip_id)`, `trips(route_id)` and `calendar_dates(date)`, so a dashboard query finds its rows directly instead of scanning 1.67 million stop times. Every dashboard query runs in under 0.2 seconds.
+- **Station search matches whole words.** A plain substring search for "Milton" also matches "Hamilton GO Centre". The search matches a name only where a word starts with the search text, so "Milton GO" finds Milton GO and Milton GO Bus only.
 - **Credentials stay out of the code.** The database password lives in a `.env` file, which is listed in `.gitignore`, and the scripts read it with `python-dotenv`.
 
 ## Questions answered
@@ -66,15 +68,20 @@ erDiagram
 | `schema.sql` | Creates the five tables (deletes them first if they exist) |
 | `load_stops_routes.py` | Loads `stops` and `routes` |
 | `load_trips_times.py` | Loads `trips`, `calendar_dates` and `stop_times` (batch loading) |
-| `queries.sql` | The three SQL queries |
-| `app.py` | The Streamlit page |
+| `load_shapes.py` | Loads `shapes` (the road path of every route, 446,142 points) with PostgreSQL `COPY` |
+| `indexes.sql` | Adds indexes that make the dashboard queries fast |
+| `queries.sql` | The three SQL queries, to run in pgAdmin or psql |
+| `db.py` | `get_connection()`: opens a database connection using `.env` |
+| `queries.py` | The dashboard's queries, each returning a pandas DataFrame |
+| `app.py` | The Streamlit dashboard |
 | `requirements.txt` | Python packages and their versions |
+| `.env.example` | Template for `.env`, without the real password |
 
 ## How to run it
 
 You need Python 3.12 and PostgreSQL 18 on Windows.
 
-1. **Get the data.** Download the GO Transit GTFS zip from Metrolinx's open data page and extract `stops.txt`, `routes.txt`, `trips.txt`, `calendar_dates.txt` and `stop_times.txt` into a `data/` folder.
+1. **Get the data.** Download the GO Transit GTFS zip from Metrolinx's open data page and extract `stops.txt`, `routes.txt`, `trips.txt`, `calendar_dates.txt`, `stop_times.txt` and `shapes.txt` into a `data/` folder.
 2. **Install the Python packages:**
    ```
    python -m venv .venv
@@ -82,19 +89,14 @@ You need Python 3.12 and PostgreSQL 18 on Windows.
    pip install -r requirements.txt
    ```
 3. **Create the database.** In psql or pgAdmin, run `CREATE DATABASE transit;`.
-4. **Add a `.env` file** in the project folder:
-   ```
-   DB_HOST = localhost
-   DB_PORT = 5432
-   DB_NAME = transit
-   DB_USER = postgres
-   DB_PASSWORD = your_password
-   ```
-5. **Create the tables and load the data**, in this order:
+4. **Add a `.env` file:** copy `.env.example` to `.env` and put your PostgreSQL password in it.
+5. **Create the tables, load the data and add the indexes**, in this order:
    ```
    psql -U postgres -d transit -f schema.sql
    python load_stops_routes.py
    python load_trips_times.py
+   python load_shapes.py
+   psql -U postgres -d transit -f indexes.sql
    ```
 6. **Start the app:**
    ```
@@ -107,3 +109,7 @@ You need Python 3.12 and PostgreSQL 18 on Windows.
 - The data is the published schedule, not live positions, so it shows when trains are planned to run, not whether they ran on time.
 - The loaders delete and reload the whole table each time; they do not update changed rows.
 - A new GTFS feed has new IDs (route IDs start with the feed version, such as `09261126-MI`), so all files must come from the same download.
+
+## Next
+
+Phase 2: real-time delay tracking, comparing live GO Transit data with this schedule to measure how reliable each route is.
