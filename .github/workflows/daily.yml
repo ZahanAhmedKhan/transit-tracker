@@ -1,0 +1,46 @@
+name: Daily refresh
+
+# Once a day (10:00 UTC = 5 or 6 am in Toronto, after the last trips have finished):
+# 1. match yesterday's live data to the schedule and clean up old raw rows,
+# 2. then download GO's latest schedule and reload the date window.
+# Step 1 runs first so it still has the schedule for the days it summarizes.
+on:
+  schedule:
+    - cron: "0 10 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: daily
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Refresh reliability metrics and clean up raw data
+        run: python refresh_metrics.py
+
+      - name: Download the latest GO schedule
+        run: python download_gtfs.py
+
+      - name: Reload the schedule window
+        run: |
+          python load_stops_routes.py
+          python load_trips_times.py
+          python load_shapes.py
+          python run_sql.py indexes.sql
+
+      - name: Report database size
+        run: python measure_size.py
