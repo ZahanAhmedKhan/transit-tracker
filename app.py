@@ -1,9 +1,11 @@
 from datetime import date, time, timedelta
 
+import pandas as pd
 import pydeck as pdk
 import streamlit as st
 
 import queries
+import trip_planner
 
 # Street map with road and place names.
 MAP_STYLE = pdk.map_styles.CARTO_ROAD
@@ -237,15 +239,179 @@ def show_reliability():
 
 
 st.set_page_config(page_title="GO Transit Reliability Tracker", layout="wide")
+def default_travel_date(first_date, last_date):
+    """Today, or the next weekday if today is a weekend, kept inside the schedule."""
+    travel_date = max(date.today(), first_date)
+    while travel_date.weekday() >= 5 and travel_date < last_date:
+        travel_date = travel_date + timedelta(days=1)
+    return min(travel_date, last_date)
+
+
+def load_leg(trip_id, board_sequence, alight_sequence):
+    """Everything needed to show one ride: route, colour, stops and the road path."""
+    info = queries.get_trip_info(trip_id).iloc[0]
+    stops = queries.get_leg_stops(trip_id, board_sequence, alight_sequence)
+    if info["shape_id"]:
+        shape = queries.get_trip_shape(info["shape_id"])
+        shape = trip_planner.cut_shape(shape, stops.iloc[0], stops.iloc[-1])
+    else:
+        shape = stops[["latitude", "longitude"]]
+    return {
+        "info": info,
+        "stops": stops,
+        "color": hex_to_rgb(info["route_color"]),
+        "path": shape[["longitude", "latitude"]].values.tolist(),
+    }
+
+
+def leg_step(leg):
+    """Directions for one ride, like 'Take Bus 56 towards Oakville GO ...'."""
+    info, stops = leg["info"], leg["stops"]
+    first, last = stops.iloc[0], stops.iloc[-1]
+    destination = info["destination"].split(" - ", 1)[-1]
+    vehicle = trip_planner.vehicle_name(info["route_type"])
+    stops_ridden = len(stops) - 1
+    return (
+        f"**Take {vehicle} {info['route']}** ({info['route_name']}) towards {destination}  \n"
+        f"Get on at **{first['stop_name']}** at **{trip_planner.clock_time(first['departure_time'])}**, "
+        f"ride {stops_ridden} stop{'s' if stops_ridden != 1 else ''}, and get off at "
+        f"**{last['stop_name']}** at **{trip_planner.clock_time(last['arrival_time'])}**."
+    )
+
+
+def change_step(first_leg, second_leg, walk_metres):
+    """Directions for changing between two rides: the walk and the wait."""
+    arrive = first_leg["stops"].iloc[-1]
+    board = second_leg["stops"].iloc[0]
+    wait = board["departure_time"] - arrive["arrival_time"]
+    if walk_metres and walk_metres > 0:
+        minutes = trip_planner.walk_minutes(walk_metres)
+        return (
+            f"Walk {walk_metres} m (about {minutes} min) to **{board['stop_name']}**. "
+            f"You have {trip_planner.duration_text(wait)} to make the connection."
+        )
+    return f"Stay at **{board['stop_name']}** and wait {trip_planner.duration_text(wait)}."
+
+
+def show_journey_map(legs):
+    """Map of the journey: each ride in its route colour, with stops shown on hover."""
+    layers = []
+    for leg in legs:
+        stops = leg["stops"].copy()
+        stops["time"] = stops["departure_time"].map(trip_planner.clock_time)
+        layers.append(pdk.Layer(
+            "PathLayer", data=[{"path": leg["path"]}], get_path="path",
+            get_color=leg["color"], width_min_pixels=5,
+        ))
+        layers.append(pdk.Layer(
+            "ScatterplotLayer", data=stops[["stop_name", "time", "latitude", "longitude"]],
+            get_position=["longitude", "latitude"], get_fill_color=[255, 255, 255],
+            get_line_color=leg["color"], stroked=True, line_width_min_pixels=3,
+            radius_min_pixels=5, pickable=True, auto_highlight=True,
+        ))
+    # Label only where you start, change and finish, so names never pile up.
+    key_stops = [legs[0]["stops"].iloc[0]] + [leg["stops"].iloc[-1] for leg in legs]
+    labels = [{"name": stop["stop_name"], "position": [stop["longitude"], stop["latitude"]]}
+              for stop in key_stops]
+    layers.append(pdk.Layer(
+        "TextLayer", data=labels, get_position="position", get_text="name",
+        get_size=14, get_color=[30, 30, 30], get_pixel_offset=[0, -20],
+        background=True, get_background_color=[255, 255, 255, 230], background_padding=[4, 2],
+    ))
+    all_points = [point for leg in legs for point in leg["path"]]
+    st.pydeck_chart(
+        pdk.Deck(
+            layers=layers,
+            initial_view_state=pdk.data_utils.compute_view(all_points),
+            map_style=MAP_STYLE,
+            tooltip={"html": "<b>{stop_name}</b><br/>{time}", "style": TOOLTIP_STYLE},
+        ),
+        height=550,
+    )
+
+
+def show_journey(journey):
+    """Step-by-step directions and a map for one journey."""
+    legs = [load_leg(journey["trip_1"], journey["board_1"], journey["alight_1"])]
+    if journey["changes"]:
+        legs.append(load_leg(journey["trip_2"], journey["board_2"], journey["alight_2"]))
+
+    total = journey["arrive"] - journey["depart_1"]
+    st.subheader(
+        f"{trip_planner.clock_time(journey['depart_1'])} → {trip_planner.clock_time(journey['arrive'])}"
+        f" · {trip_planner.duration_text(total)}"
+    )
+    st.markdown(f"1. {leg_step(legs[0])}")
+    if len(legs) == 2:
+        st.markdown(f"2. {change_step(legs[0], legs[1], journey['walk_metres'])}")
+        st.markdown(f"3. {leg_step(legs[1])}")
+    show_journey_map(legs)
+
+
+def show_trip_planner(stop_names, first_date, last_date):
+    """The Plan a trip tab: pick two stops and a time, see the best ways to get there."""
+    from_column, to_column = st.columns(2)
+    from_name = from_column.selectbox(
+        "From", stop_names, index=stop_names.index("Milton GO") if "Milton GO" in stop_names else 0,
+        key="plan_from",
+    )
+    to_name = to_column.selectbox(
+        "To", stop_names,
+        index=stop_names.index("Union Station GO") if "Union Station GO" in stop_names else 0,
+        key="plan_to",
+    )
+    date_column, time_column = st.columns(2)
+    travel_date = date_column.date_input(
+        "Date", value=default_travel_date(first_date, last_date),
+        min_value=first_date, max_value=last_date, key="plan_date",
+    )
+    leave_after = time_column.time_input("Leave after", value=time(7, 0), key="plan_time")
+
+    if from_name == to_name:
+        st.info("Pick two different stops.")
+        return
+    raw = queries.get_journeys(from_name, to_name, travel_date, leave_after.strftime("%H:%M"))
+    journeys = trip_planner.best_journeys(raw)
+    if journeys.empty:
+        st.warning(
+            f"No GO trip with at most one change leaves {from_name} for {to_name} within "
+            f"{trip_planner.SEARCH_HOURS} hours of {leave_after:%H:%M}. Try another time or a nearby stop."
+        )
+        return
+
+    options = pd.DataFrame({
+        "leave": journeys["depart_1"].map(trip_planner.clock_time),
+        "arrive": journeys["arrive"].map(trip_planner.clock_time),
+        "travel time": (journeys["arrive"] - journeys["depart_1"]).map(trip_planner.duration_text),
+        "changes": journeys["changes"],
+        "route": journeys.apply(trip_planner.journey_summary, axis=1),
+    })
+    st.write(f"{len(journeys)} options, earliest arrival first. Click a row to see that journey.")
+    table = st.dataframe(
+        options, hide_index=True, on_select="rerun", selection_mode="single-row", key="plan_table",
+    )
+    selected_rows = table.selection.rows
+    chosen = selected_rows[0] if selected_rows and selected_rows[0] < len(journeys) else 0
+    show_journey(journeys.iloc[chosen])
+    st.caption(
+        "Times are GO's published schedule. Changes allow a walk of up to "
+        f"{trip_planner.MAX_WALK_METRES} m plus {trip_planner.CHANGE_BUFFER_MINUTES} minutes to connect."
+    )
+
+
 st.title("GO Transit Reliability Tracker")
 st.write(
     "How late GO trains and buses really run: live GO Transit data collected every 5 minutes "
     "and compared with the schedule, in PostgreSQL."
 )
 
-reliability_tab, departures_tab, routes_tab, trips_tab, map_tab = st.tabs(
-    ["Reliability", "Departures", "Routes at a stop", "Trips per route", "Map of stops"]
+reliability_tab, planner_tab, departures_tab, routes_tab, trips_tab, map_tab = st.tabs(
+    ["Reliability", "Plan a trip", "Departures", "Routes at a stop", "Trips per route", "Map of stops"]
 )
+
+service_dates = queries.get_service_dates()
+first_date = service_dates["first_date"][0]
+last_date = service_dates["last_date"][0]
 
 
 # Tab 0: reliability from live data (Phase 2)
@@ -253,17 +419,14 @@ with reliability_tab:
     show_reliability()
 
 
-# Tab 1: departures from a station on a date between two times
-with departures_tab:
-    service_dates = queries.get_service_dates()
-    first_date = service_dates["first_date"][0]
-    last_date = service_dates["last_date"][0]
+# Tab 1: journeys from one stop to another
+with planner_tab:
+    show_trip_planner(queries.get_stop_names(), first_date, last_date)
 
-    # Default to the next weekday in the schedule, from today.
-    default_date = max(date.today(), first_date)
-    while default_date.weekday() >= 5 and default_date < last_date:
-        default_date = default_date + timedelta(days=1)
-    default_date = min(default_date, last_date)
+
+# Tab 2: departures from a station on a date between two times
+with departures_tab:
+    default_date = default_travel_date(first_date, last_date)
 
     station = st.text_input("Station or stop name", value="Milton GO")
     date_column, start_column, end_column = st.columns(3)
@@ -293,7 +456,7 @@ with departures_tab:
         show_trip(row["trip_id"], int(row["stop_sequence"]), row["departure"])
 
 
-# Tab 2: routes that serve a stop
+# Tab 3: routes that serve a stop
 with routes_tab:
     stop_name = st.text_input("Stop name", value="Sheridan")
     routes = queries.get_routes_at_stop(stop_name)
@@ -301,7 +464,7 @@ with routes_tab:
     st.dataframe(routes, hide_index=True)
 
 
-# Tab 3: number of trips per route
+# Tab 4: number of trips per route
 with trips_tab:
     trips_per_route = queries.get_trips_per_route()
     trips_per_route["route_label"] = trips_per_route["route"] + " " + trips_per_route["route_name"]
@@ -322,7 +485,7 @@ with trips_tab:
     st.dataframe(trips_per_route[["route", "route_name", "trips"]], hide_index=True)
 
 
-# Tab 4: every stop on a map
+# Tab 5: every stop on a map
 with map_tab:
     stops = queries.get_all_stops()
     st.write(f"{len(stops)} stops. Hover over a dot to see the stop's name.")
