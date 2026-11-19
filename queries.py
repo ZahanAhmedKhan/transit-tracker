@@ -1,5 +1,6 @@
 import pandas as pd
 
+import trip_planner
 from db import get_connection
 
 
@@ -203,3 +204,36 @@ def get_reliability_by_stop():
         WHERE observed_arrivals > 0 AND stop_lat IS NOT NULL
     """
     return run_reliability_query(sql)
+
+
+# Trip planner. The journey search itself is in trip_planner.py.
+
+
+def get_stop_names():
+    """Every distinct stop name, A to Z, for the From and To lists."""
+    return run_query("SELECT DISTINCT stop_name FROM stops ORDER BY stop_name")["stop_name"].tolist()
+
+
+def get_journeys(from_name, to_name, travel_date, leave_after):
+    """Every direct or one-change journey between two stops; see trip_planner.JOURNEYS_SQL."""
+    params = trip_planner.search_params(from_name, to_name, travel_date, leave_after)
+    return run_query(trip_planner.JOURNEYS_SQL, params)
+
+
+def get_leg_stops(trip_id, board_sequence, alight_sequence):
+    """The stops one trip makes from where you get on to where you get off, in order."""
+    sql = """
+        SELECT
+            stops.stop_name,
+            stops.stop_lat AS latitude,
+            stops.stop_lon AS longitude,
+            stop_times.arrival_time,
+            stop_times.departure_time
+        FROM stop_times
+        JOIN stops ON stops.stop_id = stop_times.stop_id
+        WHERE stop_times.trip_id = %(trip_id)s
+          AND stop_times.stop_sequence BETWEEN %(board)s AND %(alight)s
+        ORDER BY stop_times.stop_sequence
+    """
+    params = {"trip_id": trip_id, "board": int(board_sequence), "alight": int(alight_sequence)}
+    return run_query(sql, params)
