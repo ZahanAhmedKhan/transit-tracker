@@ -147,3 +147,59 @@ def get_all_stops():
         ORDER BY stop_name
     """
     return run_query(sql)
+
+
+# Reliability (Phase 2). These read the views in metrics_schema.sql; see docs/metrics.md.
+
+RATE_AND_DELAY_COLUMNS = ["on_time_rate", "avg_delay_minutes", "p90_delay_minutes"]
+
+
+def run_reliability_query(sql, params=None):
+    """Run a reliability query and turn its rate and delay columns into plain floats.
+
+    PostgreSQL NUMERIC values arrive as Python Decimals, which charts cannot plot.
+    """
+    result = run_query(sql, params)
+    for column in RATE_AND_DELAY_COLUMNS:
+        if column in result.columns:
+            result[column] = pd.to_numeric(result[column], errors="coerce").astype(float)
+    return result
+
+
+def get_reliability_overall():
+    """One row: date range, trips tracked, on-time rate and delays over all live data."""
+    return run_reliability_query("SELECT * FROM reliability_overall")
+
+
+def get_reliability_by_route(min_arrivals):
+    """On-time rate and delays per route, for routes with at least min_arrivals observations."""
+    sql = """
+        SELECT route_short_name AS route, route_name, trips_tracked, observed_arrivals,
+               on_time_rate, avg_delay_minutes, p90_delay_minutes, skipped_stops, cancelled_trips
+        FROM reliability_by_route
+        WHERE observed_arrivals >= %(min_arrivals)s
+        ORDER BY on_time_rate DESC, avg_delay_minutes
+    """
+    return run_reliability_query(sql, {"min_arrivals": min_arrivals})
+
+
+def get_reliability_by_hour():
+    """Average and 90th-percentile delay for each hour of the day (Toronto time)."""
+    sql = """
+        SELECT hour_of_day, observed_arrivals, on_time_rate, avg_delay_minutes, p90_delay_minutes
+        FROM reliability_by_hour
+        WHERE observed_arrivals > 0
+        ORDER BY hour_of_day
+    """
+    return run_reliability_query(sql)
+
+
+def get_reliability_by_stop():
+    """Average delay and on-time rate per stop, with coordinates for the map."""
+    sql = """
+        SELECT stop_id, stop_name, stop_lat AS latitude, stop_lon AS longitude,
+               observed_arrivals, on_time_rate, avg_delay_minutes, p90_delay_minutes
+        FROM reliability_by_stop
+        WHERE observed_arrivals > 0 AND stop_lat IS NOT NULL
+    """
+    return run_reliability_query(sql)

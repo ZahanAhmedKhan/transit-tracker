@@ -96,13 +96,151 @@ def show_trip(trip_id, stop_sequence, departure_time):
     st.dataframe(stops[["stop_name", "arrival", "minutes"]], hide_index=True)
 
 
-st.set_page_config(page_title="GO Transit Tracker", layout="wide")
-st.title("GO Transit Tracker")
-st.write("Questions about the GO Transit schedule, answered with SQL on PostgreSQL.")
+# Routes need at least this many observed arrivals to be ranked best or worst.
+MIN_ARRIVALS_TO_RANK = 50
 
-departures_tab, routes_tab, trips_tab, map_tab = st.tabs(
-    ["Departures", "Routes at a stop", "Trips per route", "Map of stops"]
+
+def nice_date(day):
+    """Format a date like 'November 25, 2026' (works on Windows and Linux)."""
+    return f"{day:%B} {day.day}, {day.year}"
+
+
+def delay_color(minutes):
+    """Colour for a stop on the reliability map: green on time, through yellow and orange, to red."""
+    if minutes <= 1:
+        return [26, 150, 65]
+    if minutes <= 3:
+        return [230, 190, 0]
+    if minutes <= 5:
+        return [245, 130, 30]
+    return [215, 25, 28]
+
+
+@st.cache_data(ttl=600)
+def load_reliability():
+    """Load every reliability table at once; cached for 10 minutes to spare the database."""
+    return {
+        "overall": queries.get_reliability_overall(),
+        "routes": queries.get_reliability_by_route(MIN_ARRIVALS_TO_RANK),
+        "hours": queries.get_reliability_by_hour(),
+        "stops": queries.get_reliability_by_stop(),
+    }
+
+
+def show_headline(overall):
+    """Show how much data there is, then the overall on-time rate and delays."""
+    st.caption(
+        f"Data collected since {nice_date(overall['first_service_date'])} "
+        f"(latest summarized day: {nice_date(overall['last_service_date'])}) · "
+        f"{overall['trips_tracked']:,} trips tracked · "
+        f"{overall['observed_arrivals']:,} observed arrivals"
+    )
+    rate, average, p90, cancelled = st.columns(4)
+    rate.metric("On-time rate", f"{overall['on_time_rate']:.1%}")
+    average.metric("Average delay", f"{overall['avg_delay_minutes']:.1f} min")
+    p90.metric("90% arrive within", f"{overall['p90_delay_minutes']:.1f} min")
+    cancelled.metric("Cancelled trips", f"{overall['cancelled_trips']:,}")
+    st.caption(
+        "On time = between 1 minute early and 5 minutes late. Delays use observed arrivals "
+        "only; skipped stops and cancelled trips are counted separately."
+    )
+
+
+def show_best_and_worst_routes(routes):
+    """Show the five most and least punctual routes side by side."""
+    if routes.empty:
+        st.info(f"No route has {MIN_ARRIVALS_TO_RANK} observed arrivals yet.")
+        return
+    columns = {
+        "route": "Route",
+        "route_name": "Name",
+        "on_time_rate": st.column_config.NumberColumn("On time", format="percent"),
+        "avg_delay_minutes": st.column_config.NumberColumn("Avg delay (min)", format="%.1f"),
+        "observed_arrivals": "Arrivals",
+    }
+    best_column, worst_column = st.columns(2)
+    best_column.subheader("Most punctual routes")
+    best_column.dataframe(
+        routes.head(5), column_config=columns, column_order=list(columns), hide_index=True
+    )
+    worst_column.subheader("Least punctual routes")
+    worst_column.dataframe(
+        routes.tail(5).iloc[::-1], column_config=columns, column_order=list(columns),
+        hide_index=True,
+    )
+
+
+def show_delay_by_hour(hours):
+    """Bar chart of the average delay for each hour of the day."""
+    st.subheader("Average delay by hour of day")
+    st.bar_chart(
+        hours, x="hour_of_day", y="avg_delay_minutes", x_label="Hour (Toronto time)",
+        y_label="Average delay (min)",
+    )
+
+
+def show_delay_map(stops):
+    """Map of stops coloured by their average delay."""
+    st.subheader("Average delay by stop")
+    st.caption("Green: up to 1 min · yellow: up to 3 · orange: up to 5 · red: more than 5 min late")
+    stops = stops.copy()
+    stops["color"] = stops["avg_delay_minutes"].apply(delay_color)
+    stops["delay_text"] = stops["avg_delay_minutes"].map("{:.1f}".format)
+    stops["on_time_text"] = stops["on_time_rate"].map("{:.0%}".format)
+    layer = pdk.Layer(
+        "ScatterplotLayer",
+        data=stops,
+        get_position=["longitude", "latitude"],
+        get_fill_color="color",
+        radius_min_pixels=5,
+        pickable=True,
+    )
+    st.pydeck_chart(
+        pdk.Deck(
+            layers=[layer],
+            initial_view_state=pdk.ViewState(latitude=43.65, longitude=-79.6, zoom=8),
+            map_style=MAP_STYLE,
+            tooltip={
+                "text": "{stop_name}\nAverage delay {delay_text} min\n"
+                        "On time {on_time_text} ({observed_arrivals} arrivals)"
+            },
+        ),
+        height=550,
+    )
+
+
+def show_reliability():
+    """The Reliability tab: how late GO trains and buses really run."""
+    data = load_reliability()
+    overall = data["overall"].iloc[0]
+    if not overall["observed_arrivals"]:
+        st.info(
+            "No live arrivals have been summarized yet. Live data is collected every "
+            "5 minutes and summarized once a day, so the first numbers appear the day "
+            "after collection starts."
+        )
+        return
+    show_headline(overall)
+    show_best_and_worst_routes(data["routes"])
+    show_delay_by_hour(data["hours"])
+    show_delay_map(data["stops"])
+
+
+st.set_page_config(page_title="GO Transit Reliability Tracker", layout="wide")
+st.title("GO Transit Reliability Tracker")
+st.write(
+    "How late GO trains and buses really run: live GO Transit data collected every 5 minutes "
+    "and compared with the schedule, in PostgreSQL."
 )
+
+reliability_tab, departures_tab, routes_tab, trips_tab, map_tab = st.tabs(
+    ["Reliability", "Departures", "Routes at a stop", "Trips per route", "Map of stops"]
+)
+
+
+# Tab 0: reliability from live data (Phase 2)
+with reliability_tab:
+    show_reliability()
 
 
 # Tab 1: departures from a station on a date between two times
@@ -157,7 +295,10 @@ with routes_tab:
 with trips_tab:
     trips_per_route = queries.get_trips_per_route()
     trips_per_route["route_label"] = trips_per_route["route"] + " " + trips_per_route["route_name"]
-    st.write("Trips each route runs over the whole schedule (Sept 29 to Nov 27, 2026).")
+    st.write(
+        f"Trips each route runs in the loaded schedule "
+        f"({nice_date(first_date)} to {nice_date(last_date)})."
+    )
     st.bar_chart(
         trips_per_route,
         x="route_label",
