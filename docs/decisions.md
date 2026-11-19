@@ -46,7 +46,25 @@ much more detailed paths (832,375 points for 509 shapes, against 446,142 points 
 in the Phase 1 feed). Storing fewer points per path would shrink it without changing the
 reliability numbers.
 
-## 2. The local PostgreSQL database is no longer required
+## 2. Store each live prediction once, with first-seen and last-seen times (2026-11-19)
+
+The TripUpdates feed repeats every upcoming stop of every running trip in every snapshot.
+Storing every row of every 5-minute snapshot would mostly store copies of the same prediction
+and would fill 500 MB quickly. Instead:
+
+- `rt_trip_updates` has a unique key on the prediction itself (trip, service date, stop,
+  predicted times, delays and relationships). A repeated prediction does not add a row.
+- On a repeat, `last_seen_at` moves forward (`ON CONFLICT ... DO UPDATE SET last_seen_at =
+  GREATEST(...)`). Re-running the same snapshot changes nothing, so ingestion is idempotent.
+- The final observed arrival for a trip and stop is the row with the newest `last_seen_at`.
+  Plain `ON CONFLICT DO NOTHING` would get this wrong when a prediction changes and then
+  changes back (A, B, A would end on B).
+- `rt_vehicle_positions` uses `ON CONFLICT DO NOTHING` on (vehicle, report time), since a
+  vehicle's report for a given moment never changes.
+- A cancelled trip with no stop-level updates is stored as one row with no stop, so it can be
+  counted separately from delays.
+
+## 3. The local PostgreSQL database is no longer required
 
 `db.py` uses `DATABASE_URL` when it is set and falls back to the Phase 1 local settings
 (`DB_HOST`, `DB_PORT`, …) when it is not. The loaders, `run_sql.py` and the dashboard
