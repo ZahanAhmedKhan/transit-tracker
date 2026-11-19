@@ -1,8 +1,6 @@
 import csv
-import os
 
-import psycopg
-from dotenv import load_dotenv
+from db import get_connection
 
 
 def read_gtfs_file(file_name):
@@ -63,18 +61,10 @@ def load_routes(cursor, routes):
         )
 
 
-load_dotenv()
-
 stops = read_gtfs_file("stops.txt")
 routes = read_gtfs_file("routes.txt")
 
-with psycopg.connect(
-    host=os.getenv("DB_HOST"),
-    port=os.getenv("DB_PORT"),
-    dbname=os.getenv("DB_NAME"),
-    user=os.getenv("DB_USER"),
-    password=os.getenv("DB_PASSWORD"),
-) as connection:
+with get_connection() as connection:
     with connection.cursor() as cursor:
         load_stops(cursor, stops)
         load_routes(cursor, routes)

@@ -1,9 +1,7 @@
 import csv
-import os
 from datetime import datetime
 
-import psycopg
-from dotenv import load_dotenv
+from db import get_connection
 
 BATCH_SIZE = 50000
 
@@ -118,15 +116,7 @@ def load_stop_times(cursor):
     print("Stop times loaded:", total)
 
 
-load_dotenv()
-
-with psycopg.connect(
-    host=os.getenv("DB_HOST"),
-    port=os.getenv("DB_PORT"),
-    dbname=os.getenv("DB_NAME"),
-    user=os.getenv("DB_USER"),
-    password=os.getenv("DB_PASSWORD"),
-) as connection:
+with get_connection() as connection:
     with connection.cursor() as cursor:
         load_trips(cursor)
         load_calendar_dates(cursor)
