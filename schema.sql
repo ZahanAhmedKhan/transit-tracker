@@ -56,6 +56,8 @@ CREATE TABLE calendar_dates (
 
 -- GTFS times can go past 24:00:00 (e.g. 25:30:00 for a trip after midnight),
 -- which the TIME type rejects, so they are stored as INTERVAL.
+-- Only the columns the dashboard and the reliability metrics use are kept, so the
+-- schedule fits in Supabase's 500 MB free tier (see docs/decisions.md).
 CREATE TABLE stop_times (
     trip_id         TEXT,
     stop_sequence   INTEGER,
@@ -63,7 +65,5 @@ CREATE TABLE stop_times (
     arrival_time    INTERVAL,
     departure_time  INTERVAL,
     pickup_type     INTEGER,
-    drop_off_type   INTEGER,
-    stop_headsign   TEXT,
     PRIMARY KEY (trip_id, stop_sequence)
 );
