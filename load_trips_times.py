@@ -81,7 +81,7 @@ def load_trips(cursor, service_ids):
                 )
             )
 
-    cursor.execute("DELETE FROM trips")
+    cursor.execute("TRUNCATE trips")
     cursor.executemany(
         """
         INSERT INTO trips (trip_id, route_id, service_id, trip_headsign, trip_short_name,
@@ -109,7 +109,9 @@ def insert_stop_times(cursor, batch):
 
 def load_stop_times(cursor, trip_ids):
     """Stream stop_times.txt and load the rows of the kept trips in batches."""
-    cursor.execute("DELETE FROM stop_times")
+    # TRUNCATE empties the table and frees its space at once; DELETE would leave
+    # dead rows behind every day the schedule is reloaded.
+    cursor.execute("TRUNCATE stop_times")
     batch = []
     total = 0
 
