@@ -32,7 +32,52 @@ Status: registration submitted on 2026-11-18; waiting for the key.
 The base URL is `https://api.openmetrolinx.com/OpenDataAPI/`. How the key is passed and which
 formats each path returns are checked once the key arrives, and recorded in `docs/realtime-feed.md`.
 
-## Database connection
+## Database (Supabase)
 
-The local database settings live in `.env` (see `.env.example`). If PostgreSQL rejects the
-password, the `postgres` password was changed in PostgreSQL; update `DB_PASSWORD` in `.env` to match.
+1. Create a free project at https://supabase.com (region Canada (Central)). The Data API is not
+   needed: every script connects straight to PostgreSQL.
+2. Connect → Direct → **Session pooler**, copy the connection string, and put it in `.env` as
+   `DATABASE_URL=...` with your database password in place of `[YOUR-PASSWORD]`. Use a password
+   of letters and numbers only; `@`, `#`, `/` and `%` break the connection string.
+3. Create the tables and load the schedule:
+   ```
+   python run_sql.py schema.sql
+   python run_sql.py rt_schema.sql
+   python run_sql.py metrics_schema.sql
+   python download_gtfs.py
+   python load_stops_routes.py
+   python load_trips_times.py
+   python load_shapes.py
+   python run_sql.py indexes.sql
+   ```
+4. Create the read-only login for the dashboard:
+   `python create_dashboard_role.py` (writes `DASHBOARD_DATABASE_URL` to `.env`).
+
+Without `DATABASE_URL`, the scripts use the Phase 1 local settings (`DB_HOST`, `DB_PASSWORD`, …).
+
+## GitHub Actions secrets
+
+GitHub repo → Settings → Secrets and variables → Actions → New repository secret:
+
+| Name | Value |
+|---|---|
+| `DATABASE_URL` | the `DATABASE_URL` line from `.env` (admin login) |
+| `METROLINX_API_KEY` | the Metrolinx key, once it arrives |
+
+Until `METROLINX_API_KEY` is set, the ingestion workflow ends with a yellow warning instead of
+running. The daily workflow needs only `DATABASE_URL`.
+
+## Dashboard on Streamlit Community Cloud
+
+1. Sign in at https://share.streamlit.io with GitHub and choose **Create app → Deploy a public
+   app from GitHub**.
+2. Repository `ZahanAhmedKhan/transit-tracker`, branch `main`, main file `app.py`.
+   Under **Advanced settings** pick Python 3.12.
+3. In **Secrets**, paste one line (the value of `DASHBOARD_DATABASE_URL` from `.env`, the
+   read-only login, not the admin one):
+   ```
+   DATABASE_URL = "postgresql://dashboard_reader.xxxx:password@aws-1-ca-central-1.pooler.supabase.com:5432/postgres"
+   ```
+   Streamlit passes top-level secrets to the app as environment variables, so `db.py` reads it
+   unchanged.
+4. Deploy, then put the app URL in the README and in the GitHub repo's About → Website field.
