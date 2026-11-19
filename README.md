@@ -45,7 +45,9 @@ flowchart LR
    hour of day, day of week and stop.
 5. **Show.** The Streamlit app reads the views through a read-only database login. Its Reliability tab
    shows the overall on-time rate, best and worst routes, delay by hour and a map of stops coloured by
-   delay. The original schedule tabs (departures with trip maps, routes at a stop, trips per route,
+   delay. A **Plan a trip** tab finds the best GO journeys between any two stops (direct or with one
+   change, including short walks between a station's train and bus stops) and shows each ride on a
+   map. The original schedule tabs (departures with trip maps, routes at a stop, trips per route,
    map of stops) are still there.
 
 ## How the metrics are defined
@@ -96,6 +98,7 @@ cases the tests cover, are in [docs/metrics.md](docs/metrics.md).
 |---|---|
 | `ingest.py` | Fetches the live feeds, stores new rows, logs each run |
 | `realtime_parse.py` | Turns GTFS-Realtime feeds into rows (no network or database) |
+| `trip_planner.py` | Journey search (SQL) for the Plan a trip tab: direct or one change |
 | `refresh_metrics.py` | Daily: matches live arrivals to the schedule, cleans up old raw data |
 | `download_gtfs.py` | Downloads GO's current schedule into `data/` |
 | `load_stops_routes.py`, `load_trips_times.py`, `load_shapes.py` | Load the schedule (date window) |
@@ -104,7 +107,7 @@ cases the tests cover, are in [docs/metrics.md](docs/metrics.md).
 | `measure_size.py` | Prints the database and table sizes |
 | `create_dashboard_role.py` | Creates the dashboard's read-only login |
 | `db.py`, `queries.py`, `app.py` | Database connection, dashboard queries, Streamlit app |
-| `tests/` | pytest tests for parsing, idempotent storage and the arrival matching |
+| `tests/` | pytest tests for parsing, idempotent storage, the arrival matching and the trip planner |
 | `.github/workflows/` | `ingest.yml` (every 5 min), `daily.yml` (daily), `ci.yml` (tests) |
 | `docs/` | Setup, metric definitions, decisions and measured results |
 | `queries.sql`, `explore_gtfs.py` | Phase 1: the first SQL questions and data exploration |

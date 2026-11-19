@@ -27,11 +27,19 @@ The two loads used different feeds, so the row counts are not an exact like-for-
 
 ## Milestones 2–4: Pipeline checks (2026-11-19)
 
+Test count updated below on 2026-11-19, after the trip planner was added.
+
 | Measurement | Value | How it was measured |
 |---|---|---|
-| Automated tests | 25 (all passing) | `python -m pytest` locally against Supabase (temporary tables), and in GitHub Actions CI against a PostgreSQL 17 container |
+| Automated tests | 34 (all passing) | `python -m pytest` locally against Supabase (temporary tables), and in GitHub Actions CI against a PostgreSQL 17 container |
 | Daily refresh run time | 88.8 s | Whole `daily.yml` sequence run from the laptop against Supabase, timed with `Measure-Command` |
 | Database size after a daily reload | 192 MB | `measure_size.py` after the run above |
 
 Live-data numbers (trips tracked, on-time rate, ingestion success rate, trip_id match rate) are
 added once the Metrolinx API key arrives and the tracker has run for at least 7 days.
+
+## Trip planner (2026-11-19)
+
+| Measurement | Value | How it was measured |
+|---|---|---|
+| Journey search time, laptop to Supabase | 0.3–3.3 s | `queries.get_journeys` timed with `time.perf_counter` for four searches on 2026-11-24 (Milton GO → Union, Sheridan College → Union, Milton GO → Square One, Derry Rd. @ James Snow Pkwy. → Square One), each from a fresh connection |
