@@ -8,6 +8,17 @@ import queries
 # Street map with road and place names.
 MAP_STYLE = pdk.map_styles.CARTO_ROAD
 
+# Look of the box that appears when you hover over a stop on any map.
+TOOLTIP_STYLE = {
+    "backgroundColor": "white",
+    "color": "#222",
+    "fontFamily": "sans-serif",
+    "fontSize": "13px",
+    "padding": "6px 10px",
+    "borderRadius": "6px",
+    "boxShadow": "0 2px 8px rgba(0, 0, 0, 0.25)",
+}
+
 
 def hex_to_rgb(hex_color):
     # Turns GO's colour code like "f78025" into [247, 128, 37] for the map.
@@ -59,7 +70,8 @@ def show_trip(trip_id, stop_sequence, departure_time):
         radius_min_pixels=6,
         pickable=True,
     )
-    # Start and end names always show; the stops in between show as you zoom in.
+    # Only the start and end names are drawn; the stops in between show on hover,
+    # so their names never overlap.
     end_names_layer = pdk.Layer(
         "TextLayer",
         data=stops.iloc[[0, -1]],
@@ -72,24 +84,16 @@ def show_trip(trip_id, stop_sequence, departure_time):
         get_background_color=[255, 255, 255, 230],
         background_padding=[4, 2],
     )
-    middle_names_layer = pdk.Layer(
-        "TextLayer",
-        data=stops.iloc[1:-1],
-        get_position=["longitude", "latitude"],
-        get_text="stop_name",
-        get_size=150,
-        size_units=pdk.types.String("meters"),
-        size_max_pixels=13,
-        get_color=[60, 60, 60],
-        get_pixel_offset=[0, -14],
-    )
     view = pdk.data_utils.compute_view(path)
     st.pydeck_chart(
         pdk.Deck(
-            layers=[line_layer, stop_layer, middle_names_layer, end_names_layer],
+            layers=[line_layer, stop_layer, end_names_layer],
             initial_view_state=view,
             map_style=MAP_STYLE,
-            tooltip={"text": "{stop_name}\nArrives {arrival} ({minutes} min)"},
+            tooltip={
+                "html": "<b>{stop_name}</b><br/>Arrives {arrival} ({minutes} min)",
+                "style": TOOLTIP_STYLE,
+            },
         ),
         height=550,
     )
@@ -192,8 +196,13 @@ def show_delay_map(stops):
         data=stops,
         get_position=["longitude", "latitude"],
         get_fill_color="color",
+        get_line_color=[255, 255, 255],
+        stroked=True,
+        line_width_min_pixels=1,
         radius_min_pixels=5,
+        radius_max_pixels=10,
         pickable=True,
+        auto_highlight=True,
     )
     st.pydeck_chart(
         pdk.Deck(
@@ -201,8 +210,9 @@ def show_delay_map(stops):
             initial_view_state=pdk.ViewState(latitude=43.65, longitude=-79.6, zoom=8),
             map_style=MAP_STYLE,
             tooltip={
-                "text": "{stop_name}\nAverage delay {delay_text} min\n"
-                        "On time {on_time_text} ({observed_arrivals} arrivals)"
+                "html": "<b>{stop_name}</b><br/>Average delay {delay_text} min<br/>"
+                        "On time {on_time_text} ({observed_arrivals} arrivals)",
+                "style": TOOLTIP_STYLE,
             },
         ),
         height=550,
@@ -315,36 +325,29 @@ with trips_tab:
 # Tab 4: every stop on a map
 with map_tab:
     stops = queries.get_all_stops()
-    st.write(f"{len(stops)} stops. Zoom in to read stop names; hover a dot for its name.")
+    st.write(f"{len(stops)} stops. Hover over a dot to see the stop's name.")
+    # No always-on labels: GO has a stop on each side of many roads, so the names
+    # would be drawn on top of each other. The name shows on hover instead.
     dot_layer = pdk.Layer(
         "ScatterplotLayer",
         data=stops,
         get_position=["longitude", "latitude"],
         get_fill_color=[0, 120, 70],
+        get_line_color=[255, 255, 255],
+        stroked=True,
+        line_width_min_pixels=1,
         radius_min_pixels=4,
+        radius_max_pixels=8,
         pickable=True,
-    )
-    # Names are sized in metres, so they are too small to see zoomed out and
-    # become readable as you zoom in. pdk.types.String keeps "meters" as a plain
-    # value; without it pydeck reads it as a column name and ignores the setting.
-    name_layer = pdk.Layer(
-        "TextLayer",
-        data=stops,
-        get_position=["longitude", "latitude"],
-        get_text="stop_name",
-        get_size=150,
-        size_units=pdk.types.String("meters"),
-        size_max_pixels=14,
-        get_color=[30, 30, 30],
-        get_pixel_offset=[0, -14],
+        auto_highlight=True,
     )
     view = pdk.ViewState(latitude=43.65, longitude=-79.6, zoom=8)
     st.pydeck_chart(
         pdk.Deck(
-            layers=[dot_layer, name_layer],
+            layers=[dot_layer],
             initial_view_state=view,
             map_style=MAP_STYLE,
-            tooltip={"text": "{stop_name}"},
+            tooltip={"html": "<b>{stop_name}</b>", "style": TOOLTIP_STYLE},
         ),
         height=650,
     )
